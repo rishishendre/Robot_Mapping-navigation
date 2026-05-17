@@ -28,6 +28,8 @@ class Mapper(Node):
         self.gy=0
         self.rx=0
         self.ry=0
+        self.prev_wx = 0
+        self.prev_wy = 0
            
     def odom_callback(self, msg):
         self.robot_x = msg.pose.pose.position.x
@@ -39,8 +41,8 @@ class Mapper(Node):
         self.robot_theta = math.atan2(siny, cosy)
     
     def xy_to_grid(self,x,y):
-        self.wx = round(self.robot_x + x * math.cos(self.robot_theta) - y * math.sin(self.robot_theta),2)
-        self.wy = round(self.robot_y + x * math.sin(self.robot_theta) + y * math.cos(self.robot_theta),2)
+        self.wx = self.robot_x + x * math.cos(self.robot_theta) - y * math.sin(self.robot_theta)
+        self.wy = self.robot_y + x * math.sin(self.robot_theta) + y * math.cos(self.robot_theta)
 
         self.gy = int(self.wx / self.resolution) + self.width // 2
         self.gx = int(self.wy / self.resolution) + self.height // 2
@@ -50,7 +52,7 @@ class Mapper(Node):
          
         if abs(self.gx) < self.width and abs(self.gy) < self.height and abs(self.rx) < self.width and abs(self.ry) < self.height: #grid andar ani chaiye
             self.count_grid[self.gx][self.gy] += 1
-            if abs(self.gx-self.rx)<20 or abs(self.gy-self.ry)<20:
+            if abs(self.gx-self.rx)<30 or abs(self.gy-self.ry)<30:
                 self.grid[self.gx][self.gy]=100 if self.count_grid[self.gx][self.gy]>self.count_threshold else -1
                 self.bresenham(self.rx,self.ry,self.gx,self.gy)
                    
@@ -70,8 +72,10 @@ class Mapper(Node):
                 x0 += sx
             if e2 < dx:
                 err += dx
-                y0 += sy    
-            self.grid[x0][y0]=0 if self.grid[x0][y0]!=100 else 100      
+                y0 += sy  
+            self.count_grid[x0][y0] += 1   
+            if self.count_grid[x0][y0]>self.count_threshold:   
+                self.grid[x0][y0]=0 if self.grid[x0][y0]!=100 else 100      
         
 
     def scan_callback(self, msg):
@@ -81,10 +85,9 @@ class Mapper(Node):
                 angle += msg.angle_increment
                 continue
 
-            x = round(r * math.cos(angle),2)
-            y = round(r * math.sin(angle),2)
+            x = r * math.cos(angle)
+            y = r * math.sin(angle)
             self.xy_to_grid(x,y)
-            self.get_logger().info(f"Laser: {r},Grid: ({self.gx}, {self.gy})")
             angle += msg.angle_increment
 
         self.publish_map()
