@@ -4,6 +4,8 @@ from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import OccupancyGrid, Odometry
 import numpy as np
 import math
+from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
+from geometry_msgs.msg import TransformStamped
 class Mapper(Node):
     def __init__(self):
         super().__init__('mapper')
@@ -11,9 +13,9 @@ class Mapper(Node):
         self.subscription_odom = self.create_subscription(Odometry, '/odom', self.odom_callback, 30)
         self.publisher_occupancy_grid = self.create_publisher(OccupancyGrid, '/map', 30)
 
-        self.width = 100*2
-        self.height = 100*2
-        self.resolution = 0.03
+        self.width = 70*2
+        self.height = 70*2
+        self.resolution = 0.04
 
         self.grid = np.full((self.width, self.height), -1)
         self.count_grid = np.full((self.width, self.height), 0)
@@ -28,9 +30,30 @@ class Mapper(Node):
         self.gy=0
         self.rx=0
         self.ry=0
-        self.prev_wx = 0
-        self.prev_wy = 0
-           
+        self.tf_broadcaster = TransformBroadcaster(self)
+
+        # publish map→odom at 20Hz
+        self.create_timer(0.05, self.publish_map_to_odom)
+
+    def publish_map_to_odom(self):
+        tf = TransformStamped()
+        tf.header.stamp = self.get_clock().now().to_msg()
+        tf.header.frame_id = 'map'       # parent
+        tf.child_frame_id = 'odom'       # child
+
+        # where is odom origin relative to map?
+        # if your robot starts at (0,0) and map origin is (0,0)
+        # then this is just identity
+        tf.transform.translation.x = 0.0
+        tf.transform.translation.y = 0.0
+        tf.transform.translation.z = 0.0
+        tf.transform.rotation.x = 0.0
+        tf.transform.rotation.y = 0.0
+        tf.transform.rotation.z = 0.0
+        tf.transform.rotation.w = 1.0   # no rotation
+
+        self.tf_broadcaster.sendTransform(tf)    
+
     def odom_callback(self, msg):
         self.robot_x = msg.pose.pose.position.x
         self.robot_y = msg.pose.pose.position.y
@@ -43,18 +66,18 @@ class Mapper(Node):
     def xy_to_grid(self,x,y):
         self.wx = self.robot_x + x * math.cos(self.robot_theta) - y * math.sin(self.robot_theta)
         self.wy = self.robot_y + x * math.sin(self.robot_theta) + y * math.cos(self.robot_theta)
+        
+        self.gy = round(self.wx / self.resolution) + self.width // 2
+        self.gx = round(self.wy / self.resolution) + self.height // 2
 
-        self.gy = int(self.wx / self.resolution) + self.width // 2
-        self.gx = int(self.wy / self.resolution) + self.height // 2
 
-        self.ry = int(self.robot_x / self.resolution) + self.width // 2
-        self.rx = int(self.robot_y / self.resolution) + self.height // 2
+        self.ry = round(self.robot_x / self.resolution) + self.width // 2
+        self.rx = round(self.robot_y / self.resolution) + self.height // 2
          
         if abs(self.gx) < self.width and abs(self.gy) < self.height and abs(self.rx) < self.width and abs(self.ry) < self.height: #grid andar ani chaiye
             self.count_grid[self.gx][self.gy] += 1
-            if abs(self.gx-self.rx)<30 or abs(self.gy-self.ry)<30:
-                self.grid[self.gx][self.gy]=100 if self.count_grid[self.gx][self.gy]>self.count_threshold else -1
-                self.bresenham(self.rx,self.ry,self.gx,self.gy)
+            self.grid[self.gx][self.gy]=100 if self.count_grid[self.gx][self.gy]>self.count_threshold else -1
+            self.bresenham(self.rx,self.ry,self.gx,self.gy)
                    
     def bresenham(self, x0, y0, x1, y1):
         dx = abs(x1 - x0)
